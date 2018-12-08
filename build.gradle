@@ -1,0 +1,61 @@
+apply plugin: 'java'
+apply plugin: 'application'
+
+repositories {
+    jcenter()
+}
+
+version = '.02'
+sourceCompatibility = JavaVersion.VERSION_1_8 
+targetCompatibility = JavaVersion.VERSION_1_8
+ 
+mainClassName = 'Main'
+ext.appdir = file(/D:\Core Files\Adobe\ProgrammingComputer Books\non-book materials\Booklist app\booklist_update\bin/)
+
+dependencies {
+  compile 'org.xerial:sqlite-jdbc:3.7.2'
+  compile 'org.jsoup:jsoup:+'
+  compile 'args4j:args4j:2.33'
+  compile files('myutils.jar') 
+}
+task deleteJars {
+  delete fileTree(appdir) {
+    include '*.jar'
+  }
+}
+
+task install(type: Copy, dependsOn:[installDist, deleteJars]) {
+  def libdir = file(new File(installDist.destinationDir, 'lib')) 
+  from libdir
+  into appdir
+  
+  doLast {
+     new File(appdir, 'run.cmd').text = """
+  @echo off
+  setlocal
+  
+  ${versionText()}
+  
+  java %JVM_OPTS% %JAVA_OPTS% -cp \"%~dp0;%~dp0${String.join(';%~dp0', libdir.list())}\" ${mainClassName} %*
+  
+  """.stripIndent()
+  } 
+}
+
+def versionText() {
+  if(!version && version == 'unspecified') return '';
+  return """
+  SET APP_VERSION=${version}
+  if [%1]==[-v] (
+    echo version: %APP_VERSION%
+    goto:eof
+  )
+  if [%1]==[--version] (
+    echo version: %APP_VERSION%
+    goto:eof
+  )
+  """;    
+}
+
+
+defaultTasks 'install'
