@@ -1,7 +1,11 @@
 package sam.books;
 import static java.nio.file.StandardOpenOption.CREATE;
 import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
-import static sam.books.BooksDBMinimal.*;
+import static sam.books.BooksDBMinimal.BACKUP_FOLDER;
+import static sam.books.BooksDBMinimal.DB_PATH;
+import static sam.books.BooksDBMinimal.ROOT;
+import static sam.books.BooksDBMinimal.getStatusFromDir;
+import static sam.books.BooksDBMinimal.getStatusFromFile;
 import static sam.books.BooksMeta.AUTHOR;
 import static sam.books.BooksMeta.BOOK_ID;
 import static sam.books.BooksMeta.BOOK_TABLE_NAME;
@@ -51,6 +55,10 @@ import javax.swing.JOptionPane;
 import sam.collection.OneOrMany;
 import sam.config.MyConfig;
 import sam.console.ANSI;
+import sam.io.serilizers.ObjectReader;
+import sam.io.serilizers.ObjectWriter;
+import sam.myutils.Checker;
+import sam.myutils.MyUtilsException;
 import sam.myutils.System2;
 import sam.sql.querymaker.InserterBatch;
 import sam.tsv.Tsv; 
@@ -115,10 +123,10 @@ public class DatabaseUpdate {
         for (Path file : walk.get(false))
             bookFilesTemp.computeIfAbsent(file.getFileName().toString(), computer).add(file);
 
-        if(bookFilesTemp.values().stream().anyMatch(p -> !p.isSingleValued())) {
+        if(bookFilesTemp.values().stream().anyMatch(p -> p.size() != 1)) {
             println(createBanner("repeated books"));
             bookFilesTemp.forEach((s,t) -> {
-                if(t.isSingleValued())
+                if(t.size() == 1)
                     return;
                 println(yellow(s));
                 t.forEach(z -> println("   "+z));
@@ -131,7 +139,7 @@ public class DatabaseUpdate {
         }
 
         Map<String, Path> bookFiles = new HashMap<>();
-        bookFilesTemp.forEach((s,t) -> bookFiles.put(s, t.getValue()));
+        bookFilesTemp.forEach((s,t) -> bookFiles.put(s, t.get(0)));
 
         boolean modified = false;
 
@@ -210,13 +218,13 @@ public class DatabaseUpdate {
 
         println(green("new books : ("+newBooks.size()+")\n"));
         
-        newBooks.stream().collect(Collectors.groupingBy(s -> s.path.getParent()))
+        newBooks.stream().collect(Collectors.groupingBy(s -> s.path().getParent()))
         .forEach((s,b) -> {
         	println(yellow(s));
-        	b.forEach(t -> println("  "+t.path.getFileName()));
+        	b.forEach(t -> println("  "+t.path().getFileName()));
         });
         println("");
-
+		 
         List<NewBook> books =  new AboutBookExtractor(newBooks).getResult();
 
         if(books == null || books.isEmpty())

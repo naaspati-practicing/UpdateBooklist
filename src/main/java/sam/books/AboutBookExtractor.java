@@ -1,5 +1,7 @@
 package sam.books;
-import static java.awt.GridBagConstraints.*;
+import static java.awt.GridBagConstraints.BOTH;
+import static java.awt.GridBagConstraints.EAST;
+import static java.awt.GridBagConstraints.NONE;
 import static java.awt.GridBagConstraints.RELATIVE;
 import static java.awt.GridBagConstraints.REMAINDER;
 import static java.awt.GridBagConstraints.WEST;
@@ -21,7 +23,6 @@ import static sam.console.ANSI.red;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
@@ -31,7 +32,11 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -54,7 +59,6 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
-import javax.swing.SwingConstants;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
@@ -65,6 +69,10 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 
 import sam.io.fileutils.FileOpenerNE;
+import sam.io.serilizers.ObjectReader;
+import sam.io.serilizers.ObjectWriter;
+import sam.myutils.Checker;
+import sam.myutils.MyUtilsException;
 import sam.swing.SwingPopupShop;
 import sam.swing.SwingPopupShop.SwingPopupWrapper;
 import sam.swing.SwingUtils;
@@ -94,13 +102,26 @@ public class AboutBookExtractor extends JDialog {
 	private JTextField nameField;
 	
 	private String _description;
+	private final Map<Path, NewBook> loaded = new HashMap<>();
+	private final Path newbook_backup = DatabaseUpdate.SELF_DIR.resolve("newbook-backup");
 
 	public AboutBookExtractor(List<NewBook> books) {
 		super(null, "Details Extracting", ModalityType.APPLICATION_MODAL);
 		SwingPopupShop.setPopupsRelativeTo(this);
 		descriptionBtn.setEnabled(false);
 		descriptionBtn.addActionListener(e -> showDescription());
-
+		
+		if(Files.exists(newbook_backup)) {
+			List<NewBook> list = MyUtilsException.noError(() -> ObjectReader.read(newbook_backup), Throwable::printStackTrace);
+			if(Checker.isNotEmpty(list)) {
+				Set<Path> paths = books.stream().map(NewBook::path).collect(Collectors.toSet());
+				list.forEach(b -> {
+					if(paths.contains(b.path()))
+						this.loaded.put(b.path(), b);
+				});
+			}
+		}
+		
 		this.books = books;
 		this.iterator = books.listIterator();
 
@@ -122,8 +143,8 @@ public class AboutBookExtractor extends JDialog {
 		top.add(pathLabel);
 		top.add(open);
 		open.addActionListener(e -> {
-			if(current != null && current.path != null )
-				FileOpenerNE.openFileLocationInExplorer(ROOT.resolve(current.path).toFile());
+			if(current != null && current.path() != null )
+				FileOpenerNE.openFileLocationInExplorer(ROOT.resolve(current.path()).toFile());
 		});
 
 		JPanel leftPanel = new JPanel(new GridBagLayout(), false);
@@ -234,6 +255,9 @@ public class AboutBookExtractor extends JDialog {
 		setLocationRelativeTo(null);
 		setVisible(true);
 
+		if(!loaded.isEmpty())
+			MyUtilsException.hideError(() -> ObjectWriter.write(newbook_backup, new ArrayList<>(loaded.values())), Throwable::printStackTrace);
+		
 		return books;
 	}
 
@@ -257,7 +281,8 @@ public class AboutBookExtractor extends JDialog {
 			if(Arrays.equals(new String[] {current.isbn, current.page_count == 0 ? null : String.valueOf(current.page_count), current.year, current.description}, new String[4])){
 				if(JOptionPane.showConfirmDialog(null, "<html>Sure to Proceed<br>Fields Are Empty</html>", "Confirm Action", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.YES_OPTION)
 					return;
-			}            
+			}
+			loaded.put(current.path(), current);
 		}
 
 		if(!iterator.hasNext()){
@@ -265,12 +290,14 @@ public class AboutBookExtractor extends JDialog {
 			return;
 		}
 		current = iterator.next();
+		current.apply(loaded.get(current.path()));
+			
 		nextButton.setText(String.format(nextFormat, iterator.nextIndex()));
 
 		nameLabel.setText("<html>"+current.file_name+"</html>");
 		nameLabel.setName(current.file_name);
-		System.out.println(current.path);
-		pathLabel.setText(current.path_id+"  " + current.path);
+		System.out.println(current.path());
+		pathLabel.setText(current.path_id+"  " + current.path());
 
 		setDescription(current.description);
 		fields.forEach((c,f) -> f.setText(c.get(current)));

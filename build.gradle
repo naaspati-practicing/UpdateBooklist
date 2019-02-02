@@ -5,7 +5,7 @@ repositories {
     jcenter()
 }
 
-version = '.02'
+version = '.04'
 sourceCompatibility = JavaVersion.VERSION_1_8 
 targetCompatibility = JavaVersion.VERSION_1_8
  
@@ -19,8 +19,11 @@ dependencies {
   compile files('myutils.jar') 
 }
 task deleteJars {
-  delete fileTree(appdir) {
-    include '*.jar'
+  doLast {
+     file(appdir).listFiles().each({
+       if(it.name.endsWith('.jar'))
+         it.delete();
+     });
   }
 }
 
