@@ -8,7 +8,6 @@ import static java.awt.GridBagConstraints.WEST;
 import static javax.swing.BorderFactory.createCompoundBorder;
 import static javax.swing.BorderFactory.createEmptyBorder;
 import static javax.swing.BorderFactory.createLineBorder;
-import static sam.books.BooksDBMinimal.ROOT;
 import static sam.books.ColumnNames.AUTHOR;
 import static sam.books.ColumnNames.DESCRIPTION;
 import static sam.books.ColumnNames.FILE_NAME;
@@ -23,11 +22,13 @@ import static sam.console.ANSI.red;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -36,7 +37,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -44,6 +44,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -100,7 +101,7 @@ public class AboutBookExtractor extends JDialog {
 	private final EnumMap<ColumnNames, JTextComponent> fields = new EnumMap<>(ColumnNames.class);
 
 	private JTextField nameField;
-	
+
 	private String _description;
 	private final Map<Path, NewBook> loaded = new HashMap<>();
 	private final Path newbook_backup = DatabaseUpdate.SELF_DIR.resolve("newbook-backup");
@@ -110,7 +111,7 @@ public class AboutBookExtractor extends JDialog {
 		SwingPopupShop.setPopupsRelativeTo(this);
 		descriptionBtn.setEnabled(false);
 		descriptionBtn.addActionListener(e -> showDescription());
-		
+
 		if(Files.exists(newbook_backup)) {
 			List<NewBook> list = MyUtilsException.noError(() -> ObjectReader.read(newbook_backup), Throwable::printStackTrace);
 			if(Checker.isNotEmpty(list)) {
@@ -121,7 +122,7 @@ public class AboutBookExtractor extends JDialog {
 				});
 			}
 		}
-		
+
 		this.books = books;
 		this.iterator = books.listIterator();
 
@@ -135,17 +136,9 @@ public class AboutBookExtractor extends JDialog {
 		top.setOpaque(true);
 		pathLabel.setForeground(Color.YELLOW);
 		top.setBorder(new EmptyBorder(5, 5, 5, 5));
-		JButton open = new JButton("open");
-		open.setBorder(createCompoundBorder(createLineBorder(Color.white), createEmptyBorder(2, 5, 2, 5)));
-		open.setBackground(Color.black);
-		open.setForeground(Color.white);
-		open.setFocusPainted(false);
 		top.add(pathLabel);
-		top.add(open);
-		open.addActionListener(e -> {
-			if(current != null && current.path() != null )
-				FileOpenerNE.openFileLocationInExplorer(ROOT.resolve(current.path()).toFile());
-		});
+		top.add(btn("open", e -> open(true)));
+		top.add(btn("open location", e -> open(false)));
 
 		JPanel leftPanel = new JPanel(new GridBagLayout(), false);
 		leftPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -179,7 +172,7 @@ public class AboutBookExtractor extends JDialog {
 
 		gbc.gridx = 0;
 		gbc.gridwidth = REMAINDER;
-		
+
 		gbc.fill = NONE;
 		gbc.anchor = EAST;
 		leftPanel.add(descriptionBtn, gbc);
@@ -199,7 +192,7 @@ public class AboutBookExtractor extends JDialog {
 		url.addActionListener(e -> urlGo.doClick());
 		pTemp.add(urlGo, BorderLayout.EAST);
 		pTemp.add(Box.createHorizontalStrut(10), BorderLayout.WEST);
-		
+
 
 		leftPanel.add(pTemp, gbc);
 
@@ -237,6 +230,30 @@ public class AboutBookExtractor extends JDialog {
 		});
 	}
 
+	private void open(boolean openFile) {
+		Optional.ofNullable(current)
+		.map(c -> c.path())
+		.map(BooksDBMinimal.ROOT::resolve)
+		.map(Path::toFile)
+		.ifPresent(f -> {
+			if(openFile)
+				FileOpenerNE.openFile(f);
+			else
+				FileOpenerNE.openFileLocationInExplorer(f);
+		});
+	}
+
+	private Component btn(String string, ActionListener action) {
+		JButton open = new JButton("open");
+		open.setBorder(createCompoundBorder(createLineBorder(Color.white), createEmptyBorder(2, 5, 2, 5)));
+		open.setBackground(Color.black);
+		open.setForeground(Color.white);
+		open.setFocusPainted(false);
+		if(action != null)
+			open.addActionListener(action);
+		return open;
+	}
+
 	private void showDescription() {
 		JDialog dialog = new JDialog(this, "description", true);
 		JLabel l = new JLabel(_description);
@@ -257,7 +274,7 @@ public class AboutBookExtractor extends JDialog {
 
 		if(!loaded.isEmpty())
 			MyUtilsException.hideError(() -> ObjectWriter.write(newbook_backup, new ArrayList<>(loaded.values())), Throwable::printStackTrace);
-		
+
 		return books;
 	}
 
@@ -265,7 +282,7 @@ public class AboutBookExtractor extends JDialog {
 
 	private void nextAction(Object ignore) {
 		descriptionBtn.setEnabled(false);
-		
+
 		if(current != null) {
 			current.description = _description; 
 
@@ -291,7 +308,7 @@ public class AboutBookExtractor extends JDialog {
 		}
 		current = iterator.next();
 		current.apply(loaded.get(current.path()));
-			
+
 		nextButton.setText(String.format(nextFormat, iterator.nextIndex()));
 
 		nameLabel.setText("<html>"+current.file_name+"</html>");
