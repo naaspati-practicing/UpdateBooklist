@@ -2,40 +2,35 @@ package sam.books;
 
 import static sam.books.BooksDBMinimal.ROOT;
 
-import java.io.IOException;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 import org.json.JSONObject;
 
 import sam.string.StringWriter2;
 
 class FileWrap {
+	public int _serializer_id;
+	
 	public static final int ROOT_NAMECOUNT = ROOT.getNameCount();
 	
 	private Path path;
 	private long lastModified;
 	private String name;
-
-	public FileWrap(Path p) {
-		this.path = p;
-		this.name = path.getFileName().toString();
-		this.lastModified = readLasmodified();
-	}
+	
 	private long readLasmodified() {
 		return path().toFile().lastModified();
 	}
 	
-	public FileWrap(Path fullpath, Path subpath, long lastModified) {
+	public FileWrap(String name, Path fullpath, Path subpath, long lastModified) {
+		this(name, subpath, lastModified);
 		this.path = fullpath;
-		this.subpath = subpath;
-		this.lastModified = lastModified;
 	}
 
-	public FileWrap(String subpath, long lastModified) {
-		this.subpath = Paths.get(subpath);
+	public FileWrap(String name, Path subpath, long lastModified) {
+		this.name = name;
+		this.subpath = subpath;
 		this.lastModified = lastModified;
 	}
 	public boolean isDir() {

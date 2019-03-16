@@ -1,6 +1,4 @@
 package sam.books;
-import static java.nio.file.StandardOpenOption.CREATE;
-import static java.nio.file.StandardOpenOption.TRUNCATE_EXISTING;
 import static sam.books.BooksDBMinimal.BACKUP_FOLDER;
 import static sam.books.BooksDBMinimal.DB_PATH;
 import static sam.books.BooksDBMinimal.ROOT;
@@ -21,413 +19,471 @@ import static sam.books.BooksMeta.PATH_TABLE_NAME;
 import static sam.books.BooksMeta.STATUS;
 import static sam.books.BooksMeta.YEAR;
 import static sam.console.ANSI.createBanner;
+import static sam.console.ANSI.cyan;
 import static sam.console.ANSI.green;
 import static sam.console.ANSI.red;
 import static sam.console.ANSI.yellow;
 import static sam.sql.querymaker.QueryMaker.qm;
 
+import java.io.File;
 import java.io.IOException;
-import java.net.URISyntaxException;
-import java.nio.charset.Charset;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.Callable;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.swing.JOptionPane;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import sam.collection.OneOrMany;
+import sam.collection.Pair;
 import sam.config.MyConfig;
 import sam.console.ANSI;
+import sam.myutils.Checker;
 import sam.myutils.System2;
+import sam.sql.JDBCHelper;
 import sam.sql.querymaker.InserterBatch;
+import sam.string.StringBuilder2;
+import sam.string.StringWriter2;
 import sam.tsv.Tsv; 
 
 public class UpdateDB implements Callable<Boolean> {
-	Path[] pathIdPathMap;
-    public static final Path SELF_DIR = Paths.get(System2.lookup("SELF_DIR"));
+	private Logger logger = LoggerFactory.getLogger(UpdateDB.class);
+	public static final Path SELF_DIR = Paths.get(System2.lookup("SELF_DIR"));
 
-    public Boolean call() throws IOException, SQLException, URISyntaxException, ClassNotFoundException {
-        println(yellow("WORKING_DIR: ")+ROOT);
-        println("");
-        println(yellow("skip dirs: "));
-        
-        println(createBanner("Updating "+DB_PATH)+"\n");
+	@Override
+	public Boolean call() throws Exception {
+		logger.info("{}{}", yellow("WORKING_DIR: "), ROOT);
 
-        int count = ROOT.getNameCount();
-        Path nonBook = ROOT.resolve("non-book materials");
-        Path filesListPath = SELF_DIR.resolve("fileslist.dat");
-        Set<String> scannedFiles = Files.notExists(filesListPath) ? new HashSet<>() : Files.lines(filesListPath, Charset.forName("utf-8")).collect(Collectors.toSet());
-        Path ignoreFilesPath = SELF_DIR.resolve("ignore-files.txt");
-        Set<String> skipfiles = Files.notExists(ignoreFilesPath) ? Collections.emptySet() : Files.lines(ignoreFilesPath).collect(Collectors.collectingAndThen(Collectors.toSet(), s -> s.isEmpty() ? Collections.emptySet() : s));
-        	
-        final int size = scannedFiles.size();
+		logger.info(createBanner("Updating "+DB_PATH)+"\n");
+		Path updatePath = SELF_DIR.resolve("app_state.dat");
 
-        Map<Boolean, List<Path>> walk = Files.list(ROOT)
-                .filter(p -> !p.equals(nonBook) && Files.isDirectory(p))
-                .flatMap(t -> {
-                    try {
-                        return Files.walk(t);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                })
-                .filter(p -> {
-                    String name = p.getFileName().toString();
-                    
-                    if(scannedFiles.contains(name))
-                        return true;
-                    
-                    try {
-                        if(Files.isHidden(p) || skipfiles.contains(name))
-                            return false;
-                    } catch (IOException e) {
-                        println(red("error with file: ")+e);
-                        return false;
-                    }
-                    
-                    scannedFiles.add(name);
-                    return true;
-                })
-                .collect(Collectors.partitioningBy(Files::isDirectory, Collectors.mapping(p -> p.subpath(count, p.getNameCount()), Collectors.toList())));
-        
-        if(scannedFiles.size() != size)
-        	Files.write(filesListPath, scannedFiles,Charset.forName("utf-8"), CREATE, TRUNCATE_EXISTING);
+		List<Dir> dirsInRoot = load(updatePath);
 
-        List<Path> dirs = walk.get(true);
-        dirs.removeIf(p -> getStatusFromDir(p) != BookStatus.NONE);
+		if(Checker.isEmpty(dirsInRoot))
+			return false;
 
-        Map<String, OneOrMany<Path>> bookFilesTemp = new HashMap<>();
-        Function<String, OneOrMany<Path>> computer = s -> new OneOrMany<>();
+		Map<Path, Dir> dirs = new HashMap<>(200);
+		List<FileWrap> files = new ArrayList<>(2000);
 
-        for (Path file : walk.get(false))
-            bookFilesTemp.computeIfAbsent(file.getFileName().toString(), computer).add(file);
+		Walker.walk(dirsInRoot, w -> {
+			if(w.isDir()) {
+				if(getStatusFromDir(w.subpath()) == BookStatus.NONE)
+					dirs.put(w.subpath(), (Dir)w);
+			} else
+				files.add(w);
+		});
 
-        if(bookFilesTemp.values().stream().anyMatch(p -> p.size() != 1)) {
-            println(createBanner("repeated books"));
-            bookFilesTemp.forEach((s,t) -> {
-                if(t.size() == 1)
-                    return;
-                println(yellow(s));
-                t.forEach(z -> println("   "+z));
-            });
-            println(ANSI.red("db update skipped"));
-            JOptionPane.showMessageDialog(null, "db update skipped");
+		if(files.stream().collect(Collectors.groupingBy(FileWrap::name, Collectors.counting())).values().stream().anyMatch(e -> e > 1)) {
+			StringBuilder2 sb = new StringBuilder2();
+			sb.append(createBanner("repeated books")).ln();
 
-            printSeparator();
-            return false;
-        }
+			files.stream()
+			.collect(Collectors.groupingBy(FileWrap::name, OneOrMany.collector()))
+			.forEach((s,t) -> {
+				if(t.size() == 1)
+					return;
 
-        Map<String, Path> bookFiles = new HashMap<>();
-        bookFilesTemp.forEach((s,t) -> bookFiles.put(s, t.get(0)));
+				sb.yellow("-----------------------------------\n")
+				.append(s).ln();
 
-        boolean modified = false;
+				StringWriter2 sw = sb.writer();
+				t.forEach(z -> {
+					z.toString(sw);
+					sb.ln();
+				});
+			});
 
-        try (BooksDBMinimal db = new BooksDBMinimal()) {
-        	pathIdPathMap = new Path[db.getSequnceValue(PATH_TABLE_NAME)+1] ;
-            db.iterate("SELECT * FROM "+PATH_TABLE_NAME, rs -> pathIdPathMap[rs.getInt(PATH_ID)] = Paths.get(rs.getString(PATH)));
+			sb.red("db update skipped\n");
+			sb.append(separator()).ln();
+			logger.info(sb.toString());
 
-            //checking for dirs not in database
-            modified = checkMissingDbDirs(db, dirs) || modified;
-
-            Set<Path> dirsSet = new HashSet<>(dirs); 
-            Map<Integer, Path> extraDirs = new TreeMap<>();
-            
-            forEachPath((id, path) -> {
-            	if(!dirsSet.contains(path))
-                    extraDirs.put(id, path);
-            });
-            
-            //extra dirs in db
-            modified = processExtraDirs(extraDirs, db) || modified;
-            
-            //{book_id, file_pame, path_id}
-            ArrayList<Book1> dbBooksData = new ArrayList<>();
-            db.iterate(Book1.SELECT_SQL, rs -> {
-            	Book1 b = new Book1(rs);
-            	b.subpath(bookFiles.get(b.file_name));
-            	dbBooksData.add(b);
-            });
-
-            List<Book1> extras = dbBooksData.stream()
-                    .filter(o -> !bookFiles.containsKey(o.file_name))
-                    .collect(Collectors.toList());
-            dbBooksData.removeAll(extras);
-
-            //delete extra books
-            modified = deleteExtraBooks(extras,db) || modified;
-
-            HashMap<Path, Integer> pathToPathIdMap = new HashMap<>();
-            forEachPath((s,t) -> pathToPathIdMap.put(t, s));
-
-            //respect path changes
-            modified = lookForPathChanges(db, dbBooksData, bookFiles, pathToPathIdMap) || modified;
-
-            Set<String> temp = dbBooksData.stream().map(b -> b.file_name).collect(Collectors.toSet());
-            List<NewBook> newBooks = new ArrayList<>();
-            bookFiles.forEach((name,path) -> {
-                if(!temp.contains(name))
-                    newBooks.add(new NewBook(name, path, pathToPathIdMap.get(getParent(path))));
-            });
-
-            //list non-listed books
-            modified = processNewBooks(newBooks, db) || modified;
-
-            db.commit();
-        } catch (SQLException e1) {
-            if("user refused to proceed".equals(e1.getMessage())) {
-                println(red("user refused to proceed"));
-                return false;
-            }
-            e1.printStackTrace();
-        }
-        println(ANSI.FINISHED_BANNER+"\n\n\n");
-
-        if(modified){
-            Path t = BACKUP_FOLDER.resolve(DB_PATH.getFileName()+"_"+LocalDate.now().getDayOfWeek().getValue());
-            Files.createDirectories(t.getParent());
-            Files.copy(DB_PATH, t, StandardCopyOption.REPLACE_EXISTING);
-        }
-        return modified;
-    }
-    private void forEachPath(BiConsumer<Integer, Path> action) {
-    	for (int i = 0; i < pathIdPathMap.length; i++) {
-			Path p = pathIdPathMap[i];
-			if(p != null)
-				action.accept(i, p);
+			JOptionPane.showMessageDialog(null, "db update skipped");
+			return false;
 		}
-	}
-	private boolean processNewBooks(List<NewBook> newBooks, BooksDBMinimal db) throws SQLException {
-        if(newBooks.isEmpty())
-            return false;
 
-        println(green("new books : ("+newBooks.size()+")\n"));
-        
-        newBooks.stream().collect(Collectors.groupingBy(s -> s.path().getParent()))
-        .forEach((s,b) -> {
-        	println(yellow(s));
-        	b.forEach(t -> println("  "+t.path().getFileName()));
-        });
-        println("");
-		 
-        List<NewBook> books =  new AboutBookExtractor(newBooks).getResult();
+		boolean modified = false;
 
-        if(books == null || books.isEmpty())
-            return false;
+		try (BooksDBMinimal db = new BooksDBMinimal()) {
+			ArrayList<Pair<Integer, Path>> deleted = new ArrayList<>();
+			db.iterate("SELECT * FROM "+PATH_TABLE_NAME, rs -> {
+				int id = rs.getInt(PATH_ID);
+				Path p = Paths.get(rs.getString(PATH));
+				Dir dir = dirs.get(p);
 
-        Tsv tsv = new Tsv(BOOK_ID,
-                NAME,
-                FILE_NAME,
-                AUTHOR,
-                ISBN,
-                PAGE_COUNT,
-                YEAR);
-        
-        int max = db.findFirst("select seq from sqlite_sequence where name='"+BOOK_TABLE_NAME+"'", rs -> rs.getInt(1)) + 1;
-        
-        for (NewBook b : books) {
-        	b.id = max++;
-            tsv.addRow(String.valueOf(b.id),
-                    b.name,
-                    b.file_name,
-                    b.author,
-                    b.isbn,
-                    String.valueOf(b.page_count),
-                    b.year);
-        }
-        
-        InserterBatch<NewBook> insert = new InserterBatch<>(BOOK_TABLE_NAME);
-        insert.setInt(BOOK_ID, b -> b.id);
-        
-        for (ColumnNames n : ColumnNames.values())
-			insert.setString(n.columnName, b -> n.get(b));
-        
-        long time = System.currentTimeMillis(); 
-        insert.setLong(CREATED_ON, b -> time);
-        
-        println(yellow("\nexecutes: ")+insert.execute(db, books));
-        
-        Path p = Paths.get(MyConfig.COMMONS_DIR, "new-books-"+LocalDateTime.now().toString().replace(':', '_') + ".tsv");
-        try {
-            tsv.save(p);
-            println(yellow("created: ")+p);
-        } catch (IOException e2) {
-            println(red("failed to save: ")+p);
-        }
-        
-        printSeparator();
-        return true;
-    }
-    private boolean checkMissingDbDirs(BooksDBMinimal db, List<Path> dirs) throws SQLException {
-    	Set<Path> pathset = new HashSet<>();
-    	forEachPath((i, p) -> pathset.add(p));
-        List<Path> missings = dirs.stream().filter(p -> !pathset.contains(p)).collect(Collectors.toList());
+				if(dir == null)
+					deleted.add(new Pair<Integer, Path>(id, p));
+				else
+					dir.id(id);
+			});
 
-        if(!missings.isEmpty()){
-            println(yellow("new folders"));
-            int[] max = {pathIdPathMap.length};
+			//checking for dirs not in database
+			modified = newDirs(db, dirs) || modified;
 
-            Map<Integer, Path> map = new HashMap<>();
-            missings.forEach(p -> map.put(max[0]++, p));
-            String format = "%-"+(String.valueOf(max[0]).length() + 3)+"s%s\n";
-            map.forEach((s,t) -> printf(format, s, t));
+			//extra dirs in db
+			modified = processDeletedDirs(deleted, db) || modified;
 
-            pathIdPathMap = Arrays.copyOf(pathIdPathMap, max[0]);
-            map.forEach((s,t) -> pathIdPathMap[s] = t);
-            
-            InserterBatch<Entry<Integer, Path>> insert = new InserterBatch<>(PATH_TABLE_NAME);
-            insert.setInt(PATH_ID, e -> e.getKey());
-            insert.setString(PATH, e -> e.getValue().toString());
-            insert.setString(MARKER, e -> e.getValue().getFileName().toString());
-            
-            int count = insert.execute(db, map.entrySet());
-            println(yellow("\nexecutes: ")+count+"\n----------------------------------------------\n");
-            return true;
-        }
-        return false;
-    }
-    private boolean lookForPathChanges(BooksDBMinimal db, List<Book1> dbBooksData, Map<String, Path> bookFiles, Map<Path, Integer> pathToPathIdMap) throws SQLException {
-        db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(STATUS).where(w -> w.eqPlaceholder(BOOK_ID)).build(), ps -> {
-        	int n = 0;
-        	for (Book1 b : dbBooksData) {
-        		BookStatus s = getStatusFromFile(b.subpath());
-        		if(b.status != s) {
-        			if(n == 0)
-        				println(ANSI.yellow("STATUS CHANGES"));
-        			println(b.file_name+"\t"+b.status +" -> "+ s);
-        			n++;
-        			ps.setString(1, s == null ? null : s.toString());
-        			ps.setInt(2, b.id);
-        			ps.addBatch();
-        		}
+			Map<String, FileWrap> bookFiles = files.stream().collect(Collectors.toMap(FileWrap::name, w -> w, (o, n) -> {throw new IllegalStateException("duplicate: \""+o+"\", \""+n+"\"");}, () -> new HashMap<>(files.size() + 20)));
+
+			//{book_id, file_pame, path_id}
+			ArrayList<Book1> dbBooksData = new ArrayList<>(files.size() + 10);
+			List<Book1> extras = new ArrayList<>();
+
+			db.iterate(Book1.SELECT_SQL, rs -> {
+				Book1 b = new Book1(rs);
+				FileWrap f = bookFiles.get(b.file_name);
+				if(f == null) {
+					extras.add(b);
+				} else {
+					f.found(true);
+					b.file(f);
+					dbBooksData.add(b);
+				}
+			});
+
+			//delete extra books
+			modified = deleteExtraBooks(extras, dirs,db) || modified;
+
+			//respect path changes
+			modified = lookForPathChanges(db, dbBooksData, bookFiles, dirs) || modified;
+
+			List<NewBook> newBooks = files.stream()
+					.filter(f -> !f.found())
+					.map(f -> new NewBook(f, dirs.get(getParent(f.subpath()))))
+					.collect(Collectors.toList());
+
+			//list non-listed books
+			modified = processNewBooks(newBooks, db) || modified;
+			db.commit();
+		} catch (SQLException e1) {
+			if("user refused to proceed".equals(e1.getMessage())) {
+				logger.info(red("user refused to proceed"));
+				return false;
 			}
-        	if(n != 0)  
-        		println("status change: "+ps.executeBatch().length+"\n");
-        	return null;
-        });
-        
-        ArrayList<Book1> changed = new ArrayList<>();
+			e1.printStackTrace();
+		}
+		logger.info(ANSI.FINISHED_BANNER+"\n\n\n");
 
-        for (Book1 o : dbBooksData) {
-            Path p2 = bookFiles.get(o.file_name);
+		if(modified){
+			Path t = BACKUP_FOLDER.resolve(DB_PATH.getFileName()+"_"+LocalDate.now().getDayOfWeek().getValue());
+			Files.createDirectories(t.getParent());
+			Files.copy(DB_PATH, t, StandardCopyOption.REPLACE_EXISTING);
+		}
 
-            int idNew = pathToPathIdMap.get(getParent(p2));
+		return modified;
+	}
 
-            if(idNew != o.path_id) {
-                o.setNewPathId(idNew);
-                changed.add(o);
-            }
-        }
-        if(!changed.isEmpty()){
-            println(red("changed books paths ("+changed.size()+")\n"));
-            String format = "%-5s%-12s%-12s%s\n";
-            print(yellow(String.format(format, "id", "old_path_id", "new_path_id", "file_name")));
-            for (Book1 o : changed) printf(format, o.id, o.path_id, o.getNewPathId(), o.file_name);
 
-            println("");
+	/**
+	 * returns dirs in root Dir
+	 * @param updatePath
+	 * @return
+	 * @throws IOException
+	 */
+	private List<Dir> load(Path updatePath) throws IOException {
+		List<Dir> result = new Serializer().read(updatePath);
 
-            String format2 = "%-10s%s\n";
-            print("\n"+yellow(String.format(format2, "path_id", "path")));
-            changed.stream()
-            .map(o -> o.getNewPathId())
-            .distinct()
-            .forEach(path_id -> printf(format2, path_id, pathIdPathMap[path_id]));
+		Walker w = new Walker(skipFilePath());
+		if(Checker.isEmpty(result))
+			return w.walkRootDir();
 
-            db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(PATH_ID).where(w -> w.eqPlaceholder(BOOK_ID)).build(), 
-                    ps -> {
-                        for (Book1 o : changed) {
-                            ps.setInt(1, o.getNewPathId());
-                            ps.setInt(2, o.id);
-                            ps.addBatch();
-                        }
-                        println(yellow("\nexecutes: ")+ps.executeBatch().length);
-                        return null;
-                    });
-            printSeparator();
-            return true;
-        }
-        return false;
-    }
-    
-    private Object getParent(Path file) {
-        if(file == null)
-            return null;
-        BookStatus s = getStatusFromFile(file);
-        return s == BookStatus.NONE ? file.getParent() : file.getParent().getParent();
-    }
-    private boolean deleteExtraBooks(List<Book1> extras, BooksDBMinimal db) throws SQLException{
+		Iterator<Dir> itr = result.iterator();
+		int updateCount = 0;
+		while (itr.hasNext()) {
+			Dir dir = itr.next();
+			
+			if(!dir.exists()) {
+				itr.remove();
+				updateCount++;
+			} else
+				updateCount += dir.update(w);				
+		}
+		
+		if(updateCount == 0) {
+			logger.info("no dir modified dirs found");
+			return null;
+		}
+			
+		
+		return result;
+	}
 
-        if(!extras.isEmpty()){
-            println(red("extra books in DB ("+extras.size()+")\n"));
+	private Path skipFilePath() {
+		return SELF_DIR.resolve("ignore-subpaths.txt");
+	}
 
-            String format = "%-10s%-10s%s%n";
-            print(yellow(String.format(format, "id", "path_id", "file_name")));
-            for (Book1 o : extras) printf(format, o.id, o.path_id, o.file_name);
+	private boolean processNewBooks(List<NewBook> newBooks, BooksDBMinimal db) throws SQLException {
+		if(Checker.isEmpty(newBooks))
+			return false;
 
-            println("");
+		StringBuilder2 sb = new StringBuilder2();
+		sb.green("new books : ("+newBooks.size()+")\n");
 
-            format = "%-10s%s\n";
-            print(yellow(String.format(format, "path_id", "path")));
-            for (Book1 o : extras) printf(format, o.path_id, pathIdPathMap[o.path_id]);
+		newBooks.stream()
+		.collect(Collectors.groupingBy(s -> s.dir()))
+		.forEach((s,b) -> {
+			sb.yellow(s).ln();
+			b.forEach(t -> sb.append("  ").append(t.file.name()).ln());
+		});
+		sb.ln();
 
-            println("");
+		List<NewBook> books =  new AboutBookExtractor(newBooks).getResult();
 
-            int option = JOptionPane.showConfirmDialog(null, "<html>sure?<br>yes : confirm delete book(s)<br>no : continue without deleting<br>cancel : stop app", "delete extra  book(s)", JOptionPane.YES_NO_CANCEL_OPTION);
+		if(books == null || books.isEmpty())
+			return false;
 
-            if(option == JOptionPane.YES_OPTION){
-                println(yellow("\nexecutes: ")
-                        +db.executeUpdate(extras.stream().map(o -> String.valueOf(o.id)).collect(Collectors.joining(",", "DELETE FROM Books WHERE _id IN(", ")"))));
-                return true;
-            }
-            else if(option != JOptionPane.NO_OPTION)
-                throw new SQLException("user refused to proceed");
+		Tsv tsv = new Tsv(BOOK_ID,
+				NAME,
+				FILE_NAME,
+				AUTHOR,
+				ISBN,
+				PAGE_COUNT,
+				YEAR);
 
-            printSeparator();
-        }
-        return false;
-    }
-    private boolean processExtraDirs(Map<Integer, Path> extraDirs, BooksDBMinimal db) throws SQLException {
-        boolean dbModified = false;
+		int max = db.findFirst("select seq from sqlite_sequence where name='"+BOOK_TABLE_NAME+"'", rs -> rs.getInt(1)) + 1;
 
-        if(!extraDirs.isEmpty()){
-            println(extraDirs.values().stream().map(String::valueOf).collect(Collectors.joining("\n", red("\nTHESE Dirs WILL BE DELETED\n"), "\n")));
+		for (NewBook b : books) {
+			b.id = max++;
+			tsv.addRow(String.valueOf(b.id),
+					b.name,
+					b.file.name(),
+					b.author,
+					b.isbn,
+					String.valueOf(b.page_count),
+					b.year);
+		}
 
-            println(yellow("\nexecutes: ") +db.executeUpdate(extraDirs.keySet().stream().map(String::valueOf).collect(Collectors.joining(",", "DELETE FROM Paths WHERE path_id IN(", ")"))));
-            dbModified = true;
+		InserterBatch<NewBook> insert = new InserterBatch<>(BOOK_TABLE_NAME);
+		insert.setInt(BOOK_ID, b -> b.id);
 
-            printSeparator();
-        }
-        return dbModified;
-    }
+		for (ColumnNames n : ColumnNames.values())
+			insert.setString(n.columnName, b -> n.get(b));
 
-    private void printSeparator() {
-        println("\n----------------------------------------------\n");
-    }
-    private static void print(Object o) {
-        System.out.println(o);
-    }
-    private static void println(Object o) {
-        System.out.println(o);
-    }
-    private static void printf(String format, Object...args) {
-        System.out.printf(format, args);
-    }
+		long time = System.currentTimeMillis(); 
+		insert.setLong(CREATED_ON, b -> time);
 
+		sb.yellow("\nexecutes: ").append(insert.execute(db, books)).ln();
+
+		Path p = Paths.get(MyConfig.COMMONS_DIR, "new-books-"+LocalDateTime.now().toString().replace(':', '_') + ".tsv");
+		try {
+			tsv.save(p);
+			sb.yellow("created: ").append(p).ln();
+		} catch (IOException e2) {
+			sb.red("failed to save: ").append(p).append(", error: ").append(e2).ln();
+		}
+
+		sb.append(separator());
+		logger.info(sb.toString());
+		return true;
+	}
+	private boolean newDirs(BooksDBMinimal db, Map<Path, Dir> dirs) throws SQLException {
+		int[] max = {0};
+
+		List<Dir> missings = dirs
+				.values()
+				.stream()
+				.peek(w -> max[0] = Math.max(max[0], w.id()))
+				.filter(w -> w.id() < 0)
+				.collect(Collectors.toList());
+
+		if(!missings.isEmpty()){
+			logger.info(yellow("new folders"));
+			String format = "%-5s%s\n";
+
+			try(PreparedStatement ps = db.prepareStatement(JDBCHelper.insertSQL(PATH_TABLE_NAME, PATH_ID, PATH, MARKER))) {
+				StringBuilder2 sb = new StringBuilder2();
+
+				for (Dir w : missings) {
+					int n = ++max[0];
+					String str = w.subpath().toString();
+					sb.format(format, n, str);
+					w.id(n);
+
+					ps.setInt(1, w.id());
+					ps.setString(2, str);
+					ps.setString(3, w.name());
+
+					ps.addBatch();
+					n++;
+				}
+
+				sb.yellow("\nexecutes: ")
+				.append(ps.executeBatch().length)
+				.append("\n----------------------------------------------\n");
+
+				logger.info(sb.ln().toString());
+			}
+			return true;
+		}
+		return false;
+	}
+	private boolean lookForPathChanges(BooksDBMinimal db, List<Book1> dbBooksData, Map<String, FileWrap> bookFiles, Map<Path, Dir> dirs) throws SQLException {
+		db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(STATUS).where(w -> w.eqPlaceholder(BOOK_ID)).build(), ps -> {
+			int n = 0;
+			for (Book1 b : dbBooksData) {
+				BookStatus s = getStatusFromFile(b.file().subpath());
+
+				if(b.status != s) {
+					if(n == 0)
+						logger.info(ANSI.yellow("STATUS CHANGES"));
+					logger.info(b.file_name+"\t"+b.status +" -> "+ s);
+					n++;
+					ps.setString(1, s == null ? null : s.toString());
+					ps.setInt(2, b.id);
+					ps.addBatch();
+				}
+			}
+			if(n != 0)  
+				logger.info("status change: "+ps.executeBatch().length+"\n");
+			return null;
+		});
+
+		ArrayList<Book1> changed = new ArrayList<>();
+
+		for (Book1 o : dbBooksData) {
+			Path p2 = bookFiles.get(o.file_name).subpath();
+			Dir idNew = dirs.get(getParent(p2));
+
+			if(idNew.id() != o.path_id) {
+				o.setNewPathId(idNew.id());
+				changed.add(o);
+			}
+		}
+		if(!changed.isEmpty()){
+			StringBuilder2 sb = new StringBuilder2();
+			sb.red("changed books paths ("+changed.size()+")\n");
+			String format = "%-5s%-12s%-12s%s\n";
+			sb.append(yellow(String.format(format, "id", "old_path_id", "new_path_id", "file_name")));
+			for (Book1 o : changed) 
+				sb.format(format, o.id, o.path_id, o.getNewPathId(), o.file_name);
+
+			sb.ln();
+
+			String format2 = "%-10s%s\n";
+			sb.ln().yellow(String.format(format2, "path_id", "path"));
+
+			BitSet set = new BitSet();
+
+			changed.stream()
+			.map(o -> o.getNewPathId())
+			.forEach(e -> set.set(e));
+
+			dirs.forEach((p, dir) -> {
+				if(dir.id() >= 0 && set.get(dir.id()))
+					sb.format(format2, dir.id(), p);		
+			});
+
+			db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(PATH_ID).where(w -> w.eqPlaceholder(BOOK_ID)).build(), 
+					ps -> {
+						for (Book1 o : changed) {
+							ps.setInt(1, o.getNewPathId());
+							ps.setInt(2, o.id);
+							ps.addBatch();
+						}
+						sb.yellow("\nexecutes: ").append(ps.executeBatch().length).ln();
+						return null;
+					});
+
+			logger.info(sb.append(separator()).toString());
+			return true;
+		}
+		return false;
+	}
+
+	private Object getParent(FileWrap w) {
+		return getParent(w.subpath());
+	}
+	private Object getParent(Path file) {
+		if(file == null)
+			return null;
+
+		Path parent = file.getParent();
+		BookStatus s = getStatusFromDir(parent);
+		return s == BookStatus.NONE ? parent : parent.getParent();
+	}
+	private boolean deleteExtraBooks(List<Book1> extras, Map<Path, Dir> dirs, BooksDBMinimal db) throws SQLException{
+		if(Checker.isEmpty(extras))
+			return false;
+
+		StringBuilder2 sb = new StringBuilder2();
+		sb.red("extra books in DB ("+extras.size()+")\n");
+		String format = "%-10s%-10s%s%n";
+		sb.append(String.format(format, "id", "path_id", "file_name"));
+
+		for (Book1 o : extras) 
+			sb.format(format, o.id, o.path_id, o.file_name);
+
+		sb.ln();
+
+		BitSet set = new BitSet();
+		extras.forEach(e -> set.set(e.path_id));
+		Map<Integer, Dir> map = dirs.values().stream().filter(w -> w.id() >= 0 && set.get(w.id())).collect(Collectors.toMap(e -> e.id(), e -> e));
+
+		format = "%-10s%s\n";
+		sb.yellow(String.format(format, "path_id", "path"));
+		for (Book1 o : extras) 
+			sb.format(format, o.path_id, map.get(o.path_id));
+
+		sb.ln();
+		logger.info(sb.toString());
+
+		int option = JOptionPane.showConfirmDialog(null, "<html>sure?<br>yes : confirm delete book(s)<br>no : continue without deleting<br>cancel : stop app", "delete extra  book(s)", JOptionPane.YES_NO_CANCEL_OPTION);
+
+		if(option == JOptionPane.YES_OPTION){
+			logger.info(yellow("\nexecutes: ") +db.executeUpdate(extras.stream().map(o -> String.valueOf(o.id)).collect(Collectors.joining(",", "DELETE FROM Books WHERE _id IN(", ")"))));
+			logger.info(separator());
+			return true;
+		} else if(option != JOptionPane.NO_OPTION)
+			throw new SQLException("user refused to proceed");
+
+		logger.info(separator());
+		return false;
+	}
+	private boolean processDeletedDirs(List<Pair<Integer, Path>> notfound, BooksDBMinimal db) throws SQLException {
+		if(Checker.isEmpty(notfound))
+			return false;
+
+		StringBuilder2 sb = new StringBuilder2();
+		sb.red("\nTHESE Dirs WILL BE DELETED\n");
+
+		StringBuilder sql = new StringBuilder("DELETE FROM Paths WHERE path_id IN(");
+		notfound.forEach(e -> {
+			sb.append(e.key).append(": ").append(e.value).ln();
+			sql.append(e.key).append(',');
+		});
+		sql.setCharAt(sql.length() - 1, ')');
+
+		sb.yellow("\nexecutes: ").append(db.executeUpdate(sql.toString()));
+		sb.append(separator());
+
+		logger.info(sb.toString());
+		return true;
+	}
+
+	private String separator() {
+		return "\n----------------------------------------------\n";
+	}
 }

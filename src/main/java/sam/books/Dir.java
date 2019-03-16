@@ -1,25 +1,30 @@
 package sam.books;
 
+import java.io.IOException;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.function.Consumer;
 
-public class Dir extends FileWrap implements Iterable<FileWrap> {
-	private int id = -1;
-	private final Map<Path, FileWrap> children;
+public class Dir extends FileWrap {
+	public static final FileWrap[] EMPTY = new FileWrap[0];
 	
-	public Dir(Path fullpath, Path subpath, long lastModified, Map<Path, FileWrap> children) {
-		super(fullpath, subpath, lastModified);
+	private int id = -1;
+	private FileWrap[] children;
+	private int index;
+	
+	public Dir(String name, Path fullpath, Path subpath, long lastModified, FileWrap[] children) {
+		super(name, fullpath, subpath, lastModified);
 		this.children = children;
 	}
-	public Dir(Path p) {
-		super(p);
-		this.children = new HashMap<>();
+	
+	public Dir(String name, Path subpath, long lastModified, FileWrap[] children) {
+		super(name, subpath, lastModified);
+		this.children = children;
 	}
-	public Dir(String subpath, long lastModified) {
-		super(subpath, lastModified);
-		this.children = new HashMap<>();
+	public void add(FileWrap file) {
+		if(children[index] != null)
+			throw new IllegalStateException();
+		
+		children[index++] = file;
 	}
 	public void id(int id) {
 		if(id != -1)
@@ -33,9 +38,37 @@ public class Dir extends FileWrap implements Iterable<FileWrap> {
 	public boolean isDir() {
 		return true;
 	}
-	@Override
-	public Iterator<FileWrap> iterator() {
-		return children.values().iterator();
+	
+	public void forEach(Consumer<? super FileWrap> action) {
+		for (FileWrap f : children) 
+			action.accept(f);
 	}
-
+	public int deepCount() {
+		int n = children.length;
+		
+		for (FileWrap f : children) {
+			if(f.isDir())
+				n += ((Dir)f).deepCount();
+		}
+		
+		return n;
+	}
+	public int count() {
+		return children.length;
+	}
+	public int update(Walker walker) throws IOException {
+		int mod = 0;
+		
+		if(isModified()) {
+			this.children = walker.update(this, children);
+			mod++;
+		} else {
+			for (FileWrap f : children) {
+				if(f.isDir())
+					mod += ((Dir)f).update(walker);
+			}
+		}
+		
+		return mod;
+	}
 }
