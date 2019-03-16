@@ -1,8 +1,13 @@
 package sam.books;
-import static sam.books.BooksDBMinimal.*;
+import static sam.books.BooksDBMinimal.ROOT;
+import static sam.books.BooksDBMinimal.findBook;
+import static sam.books.BooksMeta.BOOK_ID;
+import static sam.books.BooksMeta.BOOK_TABLE_NAME;
 import static sam.books.BooksMeta.FILE_NAME;
-import static sam.books.BooksMeta.*;
-
+import static sam.books.BooksMeta.PATH;
+import static sam.books.BooksMeta.PATH_ID;
+import static sam.books.BooksMeta.PATH_TABLE_NAME;
+import static sam.sql.querymaker.QueryMaker.qm;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +23,6 @@ import javax.swing.JOptionPane;
 
 import sam.collection.Iterators;
 import sam.console.ANSI;
-import static sam.sql.querymaker.QueryMaker.qm;
 
 public class BookMove {
     private int inputPathId = -1;

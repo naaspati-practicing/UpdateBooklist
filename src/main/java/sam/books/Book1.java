@@ -1,15 +1,16 @@
 package sam.books;
-import static sam.books.BooksMeta.*;
+import static sam.books.BooksMeta.BOOK_ID;
+import static sam.books.BooksMeta.BOOK_TABLE_NAME;
 import static sam.books.BooksMeta.FILE_NAME;
 import static sam.books.BooksMeta.PATH_ID;
 import static sam.books.BooksMeta.STATUS;
 
-import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Map;
 import java.util.Optional;
 
+import sam.myutils.Checker;
+import sam.myutils.ThrowException;
 import sam.sql.JDBCHelper;
 
 
@@ -21,16 +22,24 @@ public class Book1 {
     final int path_id;
     private int new_path_id;
     final BookStatus status;
-    final Path path;
+    private FileWrap file;
     
-    public Book1(ResultSet rs,Map<String, Path> bookFiles) throws SQLException {
+    public Book1(ResultSet rs) throws SQLException {
         this.id = rs.getInt(BOOK_ID);
         this.file_name = rs.getString(FILE_NAME);
         this.path_id = rs.getInt(PATH_ID);
         this.status = Optional.ofNullable(rs.getString(STATUS)).map(BookStatus::valueOf).orElse(null);
-        this.path = bookFiles.get(file_name);
     }
+    public void file(FileWrap file) {
+    	if(file != null)
+    		ThrowException.illegalAccessError();
+		this.file = file;
+	}
+    public FileWrap file() {
+		return file;
+	}
     public void setNewPathId(int idNew) {
+    	Checker.assertTrue(idNew >= 0);
         new_path_id = idNew;
     }
     public int getNewPathId() {

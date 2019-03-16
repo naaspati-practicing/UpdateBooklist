@@ -104,7 +104,7 @@ public class AboutBookExtractor extends JDialog {
 
 	private String _description;
 	private final Map<Path, NewBook> loaded = new HashMap<>();
-	private final Path newbook_backup = DatabaseUpdate.SELF_DIR.resolve("newbook-backup");
+	private final Path newbook_backup = UpdateDB.SELF_DIR.resolve("newbook-backup");
 
 	public AboutBookExtractor(List<NewBook> books) {
 		super(null, "Details Extracting", ModalityType.APPLICATION_MODAL);
@@ -244,7 +244,7 @@ public class AboutBookExtractor extends JDialog {
 	}
 
 	private Component btn(String string, ActionListener action) {
-		JButton open = new JButton("open");
+		JButton open = new JButton(string);
 		open.setBorder(createCompoundBorder(createLineBorder(Color.white), createEmptyBorder(2, 5, 2, 5)));
 		open.setBackground(Color.black);
 		open.setForeground(Color.white);

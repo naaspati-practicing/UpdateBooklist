@@ -46,6 +46,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -55,19 +56,15 @@ import javax.swing.JOptionPane;
 import sam.collection.OneOrMany;
 import sam.config.MyConfig;
 import sam.console.ANSI;
-import sam.io.serilizers.ObjectReader;
-import sam.io.serilizers.ObjectWriter;
-import sam.myutils.Checker;
-import sam.myutils.MyUtilsException;
 import sam.myutils.System2;
 import sam.sql.querymaker.InserterBatch;
 import sam.tsv.Tsv; 
 
-public class DatabaseUpdate {
+public class UpdateDB implements Callable<Boolean> {
 	Path[] pathIdPathMap;
     public static final Path SELF_DIR = Paths.get(System2.lookup("SELF_DIR"));
 
-    public DatabaseUpdate() throws IOException, SQLException, URISyntaxException, ClassNotFoundException {
+    public Boolean call() throws IOException, SQLException, URISyntaxException, ClassNotFoundException {
         println(yellow("WORKING_DIR: ")+ROOT);
         println("");
         println(yellow("skip dirs: "));
@@ -135,7 +132,7 @@ public class DatabaseUpdate {
             JOptionPane.showMessageDialog(null, "db update skipped");
 
             printSeparator();
-            return;
+            return false;
         }
 
         Map<String, Path> bookFiles = new HashMap<>();
@@ -163,7 +160,11 @@ public class DatabaseUpdate {
             
             //{book_id, file_pame, path_id}
             ArrayList<Book1> dbBooksData = new ArrayList<>();
-            db.iterate(Book1.SELECT_SQL, rs -> dbBooksData.add(new Book1(rs, bookFiles)));
+            db.iterate(Book1.SELECT_SQL, rs -> {
+            	Book1 b = new Book1(rs);
+            	b.subpath(bookFiles.get(b.file_name));
+            	dbBooksData.add(b);
+            });
 
             List<Book1> extras = dbBooksData.stream()
                     .filter(o -> !bookFiles.containsKey(o.file_name))
@@ -193,7 +194,7 @@ public class DatabaseUpdate {
         } catch (SQLException e1) {
             if("user refused to proceed".equals(e1.getMessage())) {
                 println(red("user refused to proceed"));
-                return;
+                return false;
             }
             e1.printStackTrace();
         }
@@ -204,6 +205,7 @@ public class DatabaseUpdate {
             Files.createDirectories(t.getParent());
             Files.copy(DB_PATH, t, StandardCopyOption.REPLACE_EXISTING);
         }
+        return modified;
     }
     private void forEachPath(BiConsumer<Integer, Path> action) {
     	for (int i = 0; i < pathIdPathMap.length; i++) {
@@ -305,7 +307,7 @@ public class DatabaseUpdate {
         db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(STATUS).where(w -> w.eqPlaceholder(BOOK_ID)).build(), ps -> {
         	int n = 0;
         	for (Book1 b : dbBooksData) {
-        		BookStatus s = getStatusFromFile(b.path);
+        		BookStatus s = getStatusFromFile(b.subpath());
         		if(b.status != s) {
         			if(n == 0)
         				println(ANSI.yellow("STATUS CHANGES"));

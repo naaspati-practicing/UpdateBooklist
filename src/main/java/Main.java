@@ -21,7 +21,8 @@ import org.kohsuke.args4j.spi.StringArrayOptionHandler;
 
 import javafx.application.Application;
 import sam.books.BookMove;
-import sam.books.DatabaseUpdate;
+import sam.books.UpdateDB;
+import sam.config.LoadConfig;
 import sam.books.Replace;
 import sam.console.ANSI;
 import sam.myutils.System2;
@@ -46,6 +47,7 @@ public class Main {
     boolean replace;
 
     public static void main(String[] args) throws ClassNotFoundException, IOException, CmdLineException, URISyntaxException{
+    	LoadConfig.load();
         new Main(args);
     }
 
@@ -65,20 +67,21 @@ public class Main {
         
         if(updatedb){
             try {
-                new DatabaseUpdate();
-                Optional.ofNullable(System2.lookup("db.backup"))
-                .map(Paths::get)
-                .filter(Files::exists)
-                .ifPresent(p -> {
-                	Path target = p.resolve(DB_PATH.getFileName());
-                	try {
-						Files.copy(DB_PATH, target, StandardCopyOption.REPLACE_EXISTING);
-						System.out.println(ANSI.green("backup created: ")+target);
-					} catch (IOException e) {
-						System.out.println(ANSI.red("failed backup: ")+target+"  "+e);
-					}
-                });
-            } catch (SQLException | IOException | URISyntaxException | ClassNotFoundException e1) {
+            	if(new UpdateDB().call()) {
+            		Optional.ofNullable(System2.lookup("db.backup"))
+                    .map(Paths::get)
+                    .filter(Files::exists)
+                    .ifPresent(p -> {
+                    	Path target = p.resolve(DB_PATH.getFileName());
+                    	try {
+    						Files.copy(DB_PATH, target, StandardCopyOption.REPLACE_EXISTING);
+    						System.out.println(ANSI.green("backup created: ")+target);
+    					} catch (IOException e) {
+    						System.out.println(ANSI.red("failed backup: ")+target+"  "+e);
+    					}
+                    });	
+            	}
+            } catch (Exception e1) {
                 SwingUtils.showErrorDialog(null, e1);
                 return;
             }

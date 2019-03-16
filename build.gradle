@@ -1,23 +1,59 @@
-apply plugin: 'java'
-apply plugin: 'application'
+plugins {
+    id 'jacoco'
+    id 'java'
+    id 'application'
+}
 
 repositories {
     jcenter()
 }
 
-version = '.04'
+version = '.07'
 sourceCompatibility = JavaVersion.VERSION_1_8 
 targetCompatibility = JavaVersion.VERSION_1_8
  
-mainClassName = 'Main'
+mainClassName = 'Main2'
 ext.appdir = file(/D:\Core Files\Adobe\ProgrammingComputer Books\non-book materials\Booklist app\booklist_update\bin/)
+
+ext.JUNIT_VERSION = '5.3.2'
+ext.TRUTH_VERSION = '0.42'
+
+run {
+  environment 'SELF_DIR', appdir.parent
+  environment 'config_file', appdir.parent + "\\.config.properties"
+}
+
 
 dependencies {
   compile 'org.xerial:sqlite-jdbc:3.7.2'
   compile 'org.jsoup:jsoup:+'
   compile 'args4j:args4j:2.33'
-  compile files('myutils.jar') 
+  implementation 'org.json:json:20180813'
+  compile files('myutils.jar')
+  
+  implementation 'org.slf4j:slf4j-simple:1.8.0-beta4'
+  testImplementation 'com.thedeanda:lorem:2.1'
+  testImplementation 'org.junit.jupiter:junit-jupiter-api:'+JUNIT_VERSION
+  
+  // testImplementation 'org.junit.jupiter:junit-jupiter-params:'+JUNIT_VERSION
+   testRuntime 'org.junit.jupiter:junit-jupiter-engine:'+JUNIT_VERSION
+   
+  // testImplementation 'com.google.truth:truth:'+TRUTH_VERSION
+  // testImplementation 'com.google.truth.extensions:truth-java8-extension:'+TRUTH_VERSION   
 }
+
+test {
+  useJUnitPlatform()
+  systemProperty 'java.util.logging.config.file','test-logging.properties'
+}
+jacocoTestReport {
+    reports {
+        xml.enabled false
+        csv.enabled false
+        html.destination file("${buildDir}/jacoco.html")
+    }
+}
+
 task deleteJars {
   doLast {
      file(appdir).listFiles().each({
