@@ -34,8 +34,8 @@ enum ColumnNames {
     public String get(NewBook b) {
         switch (this) {
         case NAME: return  b.name;
-        case FILE_NAME: return  b.file.name();
-        case PATH_ID: return  String.valueOf(b.dir().id());
+        case FILE_NAME: return  b.path.name();
+        case PATH_ID: return  String.valueOf(b.path.parent.path_id());
         case AUTHOR: return  b.author;
         case ISBN: return  b.isbn;
         case PAGE_COUNT: return  String.valueOf(b.page_count);

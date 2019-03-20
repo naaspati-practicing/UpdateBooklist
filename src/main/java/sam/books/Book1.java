@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 
+import sam.books.pathwrap.PathWrap;
 import sam.myutils.Checker;
 import sam.myutils.ThrowException;
 import sam.sql.JDBCHelper;
@@ -22,7 +23,7 @@ public class Book1 {
     final int path_id;
     private int new_path_id;
     final BookStatus status;
-    private FileWrap file;
+    private PathWrap file;
     
     public Book1(ResultSet rs) throws SQLException {
         this.id = rs.getInt(BOOK_ID);
@@ -30,12 +31,12 @@ public class Book1 {
         this.path_id = rs.getInt(PATH_ID);
         this.status = Optional.ofNullable(rs.getString(STATUS)).map(BookStatus::valueOf).orElse(null);
     }
-    public void file(FileWrap file) {
+    public void file(PathWrap file) {
     	if(file != null)
     		ThrowException.illegalAccessError();
 		this.file = file;
 	}
-    public FileWrap file() {
+    public PathWrap file() {
 		return file;
 	}
     public void setNewPathId(int idNew) {

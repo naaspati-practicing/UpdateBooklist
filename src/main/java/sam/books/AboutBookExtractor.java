@@ -115,10 +115,10 @@ public class AboutBookExtractor extends JDialog {
 		if(Files.exists(newbook_backup)) {
 			List<NewBook> list = MyUtilsException.noError(() -> ObjectReader.read(newbook_backup), Throwable::printStackTrace);
 			if(Checker.isNotEmpty(list)) {
-				Set<Path> paths = books.stream().map(NewBook::path).collect(Collectors.toSet());
+				Set<Path> paths = books.stream().map(b -> b.path().subpath()).collect(Collectors.toSet());
 				list.forEach(b -> {
-					if(paths.contains(b.path()))
-						this.loaded.put(b.path(), b);
+					if(paths.contains(b.path().subpath()))
+						this.loaded.put(b.path().subpath(), b);
 				});
 			}
 		}
@@ -232,9 +232,7 @@ public class AboutBookExtractor extends JDialog {
 
 	private void open(boolean openFile) {
 		Optional.ofNullable(current)
-		.map(c -> c.path())
-		.map(BooksDBMinimal.ROOT::resolve)
-		.map(Path::toFile)
+		.map(c -> c.path().fullpathFile())
 		.ifPresent(f -> {
 			if(openFile)
 				FileOpenerNE.openFile(f);
@@ -299,7 +297,7 @@ public class AboutBookExtractor extends JDialog {
 				if(JOptionPane.showConfirmDialog(null, "<html>Sure to Proceed<br>Fields Are Empty</html>", "Confirm Action", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE) != JOptionPane.YES_OPTION)
 					return;
 			}
-			loaded.put(current.path(), current);
+			loaded.put(current.path().subpath(), current);
 		}
 
 		if(!iterator.hasNext()){
@@ -307,20 +305,20 @@ public class AboutBookExtractor extends JDialog {
 			return;
 		}
 		current = iterator.next();
-		current.apply(loaded.get(current.path()));
+		current.apply(loaded.get(current.path().subpath()));
 
 		nextButton.setText(String.format(nextFormat, iterator.nextIndex()));
 
-		nameLabel.setText("<html>"+current.file_name+"</html>");
-		nameLabel.setName(current.file_name);
+		nameLabel.setText("<html>"+current.path().name+"</html>");
+		nameLabel.setName(current.path().name);
 		System.out.println(current.path());
-		pathLabel.setText(current.path_id+"  " + current.path());
+		pathLabel.setText(current.path.parent.path_id()+"  " + current.path().subpath());
 
 		setDescription(current.description);
 		fields.forEach((c,f) -> f.setText(c.get(current)));
 
 		if(current.name == null)
-			nameField.setText(current.file_name.replaceFirst("\\.pdf$", ""));
+			nameField.setText(current.path().name.replaceFirst("\\.pdf$", ""));
 
 		url.setText(null);
 		setUrl();

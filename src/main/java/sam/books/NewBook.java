@@ -1,12 +1,14 @@
 package sam.books;
 import java.io.Serializable;
-import java.nio.file.Path;
 
+import sam.books.pathwrap.Dir;
+import sam.books.pathwrap.PathWrap;
 import sam.myutils.Checker;
 
 public class NewBook implements Serializable {
 	private static final long serialVersionUID = -8062536072287690587L;
-	
+
+	final PathWrap path;
 	String name;
     public int id;
     String author;
@@ -16,15 +18,10 @@ public class NewBook implements Serializable {
     String description;
     String url;
 
-    transient final FileWrap file;
-    transient final Dir parent;
-
-    public NewBook(FileWrap file, Dir parent) {
-    	Checker.assertTrue(!file.isDir());
-        this.file = file;
-        this.parent = parent;
+    public NewBook(PathWrap path) {
+    	Checker.assertTrue(!path.isDir());
+    	this.path = path;
     }
-
 	public void apply(NewBook existing) {
 		if(existing == null)
 			return;
@@ -39,10 +36,7 @@ public class NewBook implements Serializable {
 		this.url = existing.url;
 	}
 
-	public Dir dir() {
-		return parent;
-	}
-	public FileWrap file() {
-		return file;
+	public PathWrap path() {
+		return path;
 	}
 }

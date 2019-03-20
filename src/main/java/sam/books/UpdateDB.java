@@ -19,38 +19,25 @@ import static sam.books.BooksMeta.PATH_TABLE_NAME;
 import static sam.books.BooksMeta.STATUS;
 import static sam.books.BooksMeta.YEAR;
 import static sam.console.ANSI.createBanner;
-import static sam.console.ANSI.cyan;
-import static sam.console.ANSI.green;
 import static sam.console.ANSI.red;
 import static sam.console.ANSI.yellow;
 import static sam.sql.querymaker.QueryMaker.qm;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.Collections;
-import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.swing.JOptionPane;
@@ -58,12 +45,15 @@ import javax.swing.JOptionPane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import sam.books.pathwrap.Dir;
+import sam.books.pathwrap.PathWrap;
 import sam.collection.OneOrMany;
 import sam.collection.Pair;
 import sam.config.MyConfig;
 import sam.console.ANSI;
 import sam.myutils.Checker;
 import sam.myutils.System2;
+import sam.nopkg.Junk;
 import sam.sql.JDBCHelper;
 import sam.sql.querymaker.InserterBatch;
 import sam.string.StringBuilder2;
@@ -73,9 +63,11 @@ import sam.tsv.Tsv;
 public class UpdateDB implements Callable<Boolean> {
 	private Logger logger = LoggerFactory.getLogger(UpdateDB.class);
 	public static final Path SELF_DIR = Paths.get(System2.lookup("SELF_DIR"));
+	private final BitSet found = new BitSet(); 
 
 	@Override
 	public Boolean call() throws Exception {
+		found.clear();
 		logger.info("{}{}", yellow("WORKING_DIR: "), ROOT);
 
 		logger.info(createBanner("Updating "+DB_PATH)+"\n");
@@ -87,22 +79,24 @@ public class UpdateDB implements Callable<Boolean> {
 			return false;
 
 		Map<Path, Dir> dirs = new HashMap<>(200);
-		List<FileWrap> files = new ArrayList<>(2000);
+		List<PathWrap> files = new ArrayList<>(2000);
 
-		Walker.walk(dirsInRoot, w -> {
+		/** FIXME
+		 * Walker.walk(dirsInRoot, w -> {
 			if(w.isDir()) {
 				if(getStatusFromDir(w.subpath()) == BookStatus.NONE)
 					dirs.put(w.subpath(), (Dir)w);
 			} else
 				files.add(w);
 		});
+		 */
 
-		if(files.stream().collect(Collectors.groupingBy(FileWrap::name, Collectors.counting())).values().stream().anyMatch(e -> e > 1)) {
+		if(files.stream().collect(Collectors.groupingBy(PathWrap::name, Collectors.counting())).values().stream().anyMatch(e -> e > 1)) {
 			StringBuilder2 sb = new StringBuilder2();
 			sb.append(createBanner("repeated books")).ln();
 
 			files.stream()
-			.collect(Collectors.groupingBy(FileWrap::name, OneOrMany.collector()))
+			.collect(Collectors.groupingBy(PathWrap::name, OneOrMany.collector()))
 			.forEach((s,t) -> {
 				if(t.size() == 1)
 					return;
@@ -137,7 +131,7 @@ public class UpdateDB implements Callable<Boolean> {
 				if(dir == null)
 					deleted.add(new Pair<Integer, Path>(id, p));
 				else
-					dir.id(id);
+					dir.path_id(id);
 			});
 
 			//checking for dirs not in database
@@ -146,7 +140,7 @@ public class UpdateDB implements Callable<Boolean> {
 			//extra dirs in db
 			modified = processDeletedDirs(deleted, db) || modified;
 
-			Map<String, FileWrap> bookFiles = files.stream().collect(Collectors.toMap(FileWrap::name, w -> w, (o, n) -> {throw new IllegalStateException("duplicate: \""+o+"\", \""+n+"\"");}, () -> new HashMap<>(files.size() + 20)));
+			Map<String, PathWrap> bookFiles = files.stream().collect(Collectors.toMap(PathWrap::name, w -> w, (o, n) -> {throw new IllegalStateException("duplicate: \""+o+"\", \""+n+"\"");}, () -> new HashMap<>(files.size() + 20)));
 
 			//{book_id, file_pame, path_id}
 			ArrayList<Book1> dbBooksData = new ArrayList<>(files.size() + 10);
@@ -154,11 +148,11 @@ public class UpdateDB implements Callable<Boolean> {
 
 			db.iterate(Book1.SELECT_SQL, rs -> {
 				Book1 b = new Book1(rs);
-				FileWrap f = bookFiles.get(b.file_name);
+				PathWrap f = bookFiles.get(b.file_name);
 				if(f == null) {
 					extras.add(b);
 				} else {
-					f.found(true);
+					found.set(f.id);
 					b.file(f);
 					dbBooksData.add(b);
 				}
@@ -171,8 +165,8 @@ public class UpdateDB implements Callable<Boolean> {
 			modified = lookForPathChanges(db, dbBooksData, bookFiles, dirs) || modified;
 
 			List<NewBook> newBooks = files.stream()
-					.filter(f -> !f.found())
-					.map(f -> new NewBook(f, dirs.get(getParent(f.subpath()))))
+					.filter(f -> !found(f))
+					.map(f -> new NewBook(f))
 					.collect(Collectors.toList());
 
 			//list non-listed books
@@ -197,6 +191,10 @@ public class UpdateDB implements Callable<Boolean> {
 	}
 
 
+	private boolean found(PathWrap f) {
+		return found.get(f.id);
+	}
+
 	/**
 	 * returns dirs in root Dir
 	 * @param updatePath
@@ -204,9 +202,9 @@ public class UpdateDB implements Callable<Boolean> {
 	 * @throws IOException
 	 */
 	private List<Dir> load(Path updatePath) throws IOException {
-		List<Dir> result = new Serializer().read(updatePath);
-
-		Walker w = new Walker(skipFilePath());
+		/** FIXME
+		 * List<Dir> result = new Serializer().read(updatePath);
+		 * 		Walker w = new Walker(skipFilePath());
 		if(Checker.isEmpty(result))
 			return w.walkRootDir();
 
@@ -226,9 +224,11 @@ public class UpdateDB implements Callable<Boolean> {
 			logger.info("no dir modified dirs found");
 			return null;
 		}
-			
 		
 		return result;
+		 */
+		
+		return Junk.notYetImplemented();
 	}
 
 	private Path skipFilePath() {
@@ -243,10 +243,10 @@ public class UpdateDB implements Callable<Boolean> {
 		sb.green("new books : ("+newBooks.size()+")\n");
 
 		newBooks.stream()
-		.collect(Collectors.groupingBy(s -> s.dir()))
+		.collect(Collectors.groupingBy(s -> s.path().parent))
 		.forEach((s,b) -> {
 			sb.yellow(s).ln();
-			b.forEach(t -> sb.append("  ").append(t.file.name()).ln());
+			b.forEach(t -> sb.append("  ").append(t.path().name()).ln());
 		});
 		sb.ln();
 
@@ -269,7 +269,7 @@ public class UpdateDB implements Callable<Boolean> {
 			b.id = max++;
 			tsv.addRow(String.valueOf(b.id),
 					b.name,
-					b.file.name(),
+					b.path().name(),
 					b.author,
 					b.isbn,
 					String.valueOf(b.page_count),
@@ -305,8 +305,8 @@ public class UpdateDB implements Callable<Boolean> {
 		List<Dir> missings = dirs
 				.values()
 				.stream()
-				.peek(w -> max[0] = Math.max(max[0], w.id()))
-				.filter(w -> w.id() < 0)
+				.peek(w -> max[0] = Math.max(max[0], w.path_id()))
+				.filter(w -> w.path_id() < 0)
 				.collect(Collectors.toList());
 
 		if(!missings.isEmpty()){
@@ -320,9 +320,9 @@ public class UpdateDB implements Callable<Boolean> {
 					int n = ++max[0];
 					String str = w.subpath().toString();
 					sb.format(format, n, str);
-					w.id(n);
+					w.path_id(n);
 
-					ps.setInt(1, w.id());
+					ps.setInt(1, w.path_id());
 					ps.setString(2, str);
 					ps.setString(3, w.name());
 
@@ -340,7 +340,7 @@ public class UpdateDB implements Callable<Boolean> {
 		}
 		return false;
 	}
-	private boolean lookForPathChanges(BooksDBMinimal db, List<Book1> dbBooksData, Map<String, FileWrap> bookFiles, Map<Path, Dir> dirs) throws SQLException {
+	private boolean lookForPathChanges(BooksDBMinimal db, List<Book1> dbBooksData, Map<String, PathWrap> bookFiles, Map<Path, Dir> dirs) throws SQLException {
 		db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(STATUS).where(w -> w.eqPlaceholder(BOOK_ID)).build(), ps -> {
 			int n = 0;
 			for (Book1 b : dbBooksData) {
@@ -367,8 +367,8 @@ public class UpdateDB implements Callable<Boolean> {
 			Path p2 = bookFiles.get(o.file_name).subpath();
 			Dir idNew = dirs.get(getParent(p2));
 
-			if(idNew.id() != o.path_id) {
-				o.setNewPathId(idNew.id());
+			if(idNew.path_id() != o.path_id) {
+				o.setNewPathId(idNew.path_id());
 				changed.add(o);
 			}
 		}
@@ -392,8 +392,8 @@ public class UpdateDB implements Callable<Boolean> {
 			.forEach(e -> set.set(e));
 
 			dirs.forEach((p, dir) -> {
-				if(dir.id() >= 0 && set.get(dir.id()))
-					sb.format(format2, dir.id(), p);		
+				if(dir.path_id() >= 0 && set.get(dir.path_id()))
+					sb.format(format2, dir.path_id(), p);		
 			});
 
 			db.prepareStatementBlock(qm().update(BOOK_TABLE_NAME).placeholders(PATH_ID).where(w -> w.eqPlaceholder(BOOK_ID)).build(), 
@@ -411,10 +411,6 @@ public class UpdateDB implements Callable<Boolean> {
 			return true;
 		}
 		return false;
-	}
-
-	private Object getParent(FileWrap w) {
-		return getParent(w.subpath());
 	}
 	private Object getParent(Path file) {
 		if(file == null)
@@ -440,7 +436,7 @@ public class UpdateDB implements Callable<Boolean> {
 
 		BitSet set = new BitSet();
 		extras.forEach(e -> set.set(e.path_id));
-		Map<Integer, Dir> map = dirs.values().stream().filter(w -> w.id() >= 0 && set.get(w.id())).collect(Collectors.toMap(e -> e.id(), e -> e));
+		Map<Integer, Dir> map = dirs.values().stream().filter(w -> w.path_id() >= 0 && set.get(w.path_id())).collect(Collectors.toMap(e -> e.path_id(), e -> e));
 
 		format = "%-10s%s\n";
 		sb.yellow(String.format(format, "path_id", "path"));
