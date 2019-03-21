@@ -21,9 +21,8 @@ import org.kohsuke.args4j.spi.StringArrayOptionHandler;
 
 import javafx.application.Application;
 import sam.books.BookMove;
-import sam.books.UpdateDB;
-import sam.config.LoadConfig;
 import sam.books.Replace;
+import sam.books.UpdateDB;
 import sam.console.ANSI;
 import sam.myutils.System2;
 import sam.swing.SwingUtils;
@@ -47,7 +46,6 @@ public class Main {
     boolean replace;
 
     public static void main(String[] args) throws ClassNotFoundException, IOException, CmdLineException, URISyntaxException{
-    	LoadConfig.load();
         new Main(args);
     }
 

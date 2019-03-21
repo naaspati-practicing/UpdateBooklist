@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -20,7 +21,7 @@ import sam.books.pathwrap.PathWrap;
 import sam.myutils.Checker;
 
 public class Walker {
-	private final Logger logger = LoggerFactory.getLogger(Walker.class);
+	private static final Logger logger = LoggerFactory.getLogger(Walker.class);
 	private final Set<Path> skipFiles;
 
 	public Walker(Path skipFilePath) throws IOException {
@@ -30,7 +31,7 @@ public class Walker {
 	private int id;
 	
 	public Dir walkRootDir() throws IOException {
-		logger.info(cyan("walking"));
+		logger.debug("walking: {}", Dir.ROOT.fullpath());
 		this.id = Dir.ROOT.id + 1;
 		
 		PathWrap[] children = walk(Dir.ROOT);
@@ -58,6 +59,11 @@ public class Walker {
 				children[n++] = p;
 		}
 		
+		if(n != children.length) {
+			logger.debug("array resize: {}, {} -> {}", parent.subpath(), children.length, n);
+			children = Arrays.copyOf(children, n);
+		}
+		
 		for (PathWrap p : children) {
 			if(p.isDir()) {
 				Dir d = (Dir) p;
@@ -65,12 +71,11 @@ public class Walker {
 			}
 		}
 		
-		if(n != children.length) {
-			logger.debug("array resize: {}, {} -> {}", parent.subpath(), children.length, n);
-			return Arrays.copyOf(children, n);
-		} else {
-			return children;
-		}
+		return children;
+		
+	}
+	public Set<Path> getSkipFiles() {
+		return skipFiles;
 	}
 	public static Set<Path> skipFiles(Path skipFilePath) throws IOException {
 		Set<Path> skipfiles = Files.notExists(skipFilePath) ? Collections.emptySet() : Files.lines(skipFilePath).filter(Checker::isNotEmptyTrimmed).filter(s -> s.charAt(0) != '#').map(Paths::get).collect(Collectors.collectingAndThen(Collectors.toList(), s -> {
@@ -81,6 +86,22 @@ public class Walker {
 			else
 				return new HashSet<>(s);
 		}));
+		
+		if(logger.isDebugEnabled()) {
+			StringBuilder sb = new StringBuilder("Skip Files: \n  ");
+			skipfiles.forEach(s -> sb.append(s).append("\n  "));
+			sb.append('\n');
+			logger.debug(sb.toString());
+		}
 		return skipfiles;
+	}
+	
+	
+	public static void walk(Dir dir, Consumer<PathWrap> consumer) {
+		dir.forEach(consumer);
+		dir.forEach(c -> {
+			if(c.isDir())
+				walk((Dir)c, consumer);
+		});
 	}
 }

@@ -152,7 +152,7 @@ public class UpdateDB implements Callable<Boolean> {
 				if(f == null) {
 					extras.add(b);
 				} else {
-					found.set(f.id);
+					found.set(id(f));
 					b.file(f);
 					dbBooksData.add(b);
 				}
@@ -191,8 +191,13 @@ public class UpdateDB implements Callable<Boolean> {
 	}
 
 
+	private static int id(PathWrap f) {
+		return Junk.notYetImplemented(); //FIXME
+	}
+
+
 	private boolean found(PathWrap f) {
-		return found.get(f.id);
+		return found.get(id(f));
 	}
 
 	/**
