@@ -45,8 +45,8 @@ import javax.swing.JOptionPane;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import sam.books.pathwrap.Dir;
-import sam.books.pathwrap.PathWrap;
+import sam.cached.filetree.walk.Dir;
+import sam.cached.filetree.walk.PathWrap;
 import sam.collection.OneOrMany;
 import sam.collection.Pair;
 import sam.config.MyConfig;

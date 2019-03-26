@@ -9,7 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 
-import sam.books.pathwrap.PathWrap;
+import sam.cached.filetree.walk.PathWrap;
 import sam.myutils.Checker;
 import sam.myutils.ThrowException;
 import sam.sql.JDBCHelper;

@@ -1,8 +1,7 @@
 package sam.books;
 import java.io.Serializable;
 
-import sam.books.pathwrap.Dir;
-import sam.books.pathwrap.PathWrap;
+import sam.cached.filetree.walk.PathWrap;
 import sam.myutils.Checker;
 
 public class NewBook implements Serializable {
