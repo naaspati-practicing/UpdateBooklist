@@ -9,13 +9,13 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 
-import sam.cached.filetree.walk.PathWrap;
+import sam.books.walker.Dir.BookFile;
 import sam.myutils.Checker;
 import sam.myutils.ThrowException;
 import sam.sql.JDBCHelper;
 
 
-public class Book1 {
+public class BookDB {
     public static final String SELECT_SQL = JDBCHelper.selectSQL(BOOK_TABLE_NAME, BOOK_ID, FILE_NAME, PATH_ID, STATUS).append(";").toString();
     
     final int id; 
@@ -23,20 +23,20 @@ public class Book1 {
     final int path_id;
     private int new_path_id;
     final BookStatus status;
-    private PathWrap file;
+    private BookFile file;
     
-    public Book1(ResultSet rs) throws SQLException {
+    public BookDB(ResultSet rs) throws SQLException {
         this.id = rs.getInt(BOOK_ID);
         this.file_name = rs.getString(FILE_NAME);
         this.path_id = rs.getInt(PATH_ID);
         this.status = Optional.ofNullable(rs.getString(STATUS)).map(BookStatus::valueOf).orElse(null);
     }
-    public void file(PathWrap file) {
+    public void file(BookFile file) {
     	if(file != null)
     		ThrowException.illegalAccessError();
 		this.file = file;
 	}
-    public PathWrap file() {
+    public BookFile file() {
 		return file;
 	}
     public void setNewPathId(int idNew) {
